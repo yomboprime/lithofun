@@ -8,7 +8,7 @@ With Lithofun you can load an image and create a 3D lithophane, suitable for 3D 
 
 You can open the application directly at the  [repository Github page](https://yomboprime.github.io/lithofun/lithofun.html). The code is [here](https://github.com/yomboprime/lithofun).
 
-As it is static HTML5 application, your images are not uploaded anywhere. They are loaded locally in your computer and after processing, a STL file is generated.
+As it is a static HTML5 application, your images are not uploaded anywhere. They are loaded locally in your computer and after processing, a STL file is generated.
 
 ### Preparing the image
 
