@@ -19,7 +19,7 @@ There are two things to do to improve the lithophane:
 
 ### Creating the lithophane
 
-Just click on the "Load image" button, select the image stored in your computer and after a few seconds a preview will be shown. You can change the parameters to change the shape and size of the lithophane and invert the image colors. At the bottom right corner of the screen you will see info about image resolution and lithophane bounding box in mm and number of mesh triangles.
+Just click on the "Load image" button, select the image stored in your computer and after a few seconds a preview will be shown. You can change the parameters to change the shape and size of the lithophane and invert the image colors. At the bottom right corner of the screen you will see info about image resolution, lithophane bounding box in mm and number of mesh triangles.
 
 When you're done, click the "Export STL" button and after a few seconds a STL file download will appear. Save it to your computer and prepare to print!
 
