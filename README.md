@@ -15,7 +15,7 @@ As it is a static HTML5 application, your images are not uploaded anywhere. They
 There are two things to do to improve the lithophane:
 
  - Scale the image between 1000 to 1500 pixels in the longest direction (greater if your lithophane is really big) Too much resolution (e.g. 4K) will create unnecessarily detailed geometry and could be unmanageable by the app.
- - Smooth your image in a (preferably open source) image editor program. If you use [Gimp](https://www.gimp.org/), the "Selective gaussian filter" works great, because it smoothes without blurring the sharp edges.
+ - Smooth your image in a (preferably open source) image editor program. The smoothing prevents the nozzle from hard movements originated from image noise and reduces print time. If you use [Gimp](https://www.gimp.org/), the "Selective gaussian filter" works great, because it smoothes without blurring the sharp edges.
 
 ### Creating the lithophane
 
