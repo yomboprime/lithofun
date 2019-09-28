@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Lithofun - open source 3D litophane generator</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+
+		<style>
+			body {
+				margin: 0;
+				background-color: #000;
+				color: #fff;
+				font-family: Monospace;
+				font-size: 13px;
+				line-height: 24px;
+			}
+			canvas {
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+
+		<input type="file" id="theInputFiles" style="display:none">
+
+		<script type="module">
+
+			import * as THREE from './lib/three/three.module.js';
+
+			import Stats from './lib/three/libs/stats.module.js';
+			import { GUI } from './lib/three/libs/dat.gui.module.js';
+
+			import { OrbitControls } from './lib/three/controls/OrbitControls.js';
+
+			import { STLExporterOptimized } from './lib/three/exporters/STLExporterOptimized.js';
+
+			var container, stats, gui, guiData, inputFiles, loadImageBtn, info;
+			var camera, scene, renderer, controls;
+
+			var image, imageName, canvas, imageGrayValues;
+
+			var theMesh;
+			var materialPhong;
+			var materialTranslucent;
+			var vertexBuffer;
+
+			var baseSizeCm = 40;
+
+			init();
+			animate();
+
+			function init() {
+
+				changeFavicon( "./favicon.png" );
+
+				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.5, 2000 );
+				camera.position.set( 0, 120, 180 );
+
+				scene = new THREE.Scene();
+				scene.background = new THREE.Color( 0x87CEFA );
+
+				var sun = new THREE.DirectionalLight( 0xFFFFFF, 1.0 );
+				sun.position.set( 30, 12, 63 );
+				scene.add( sun );
+
+				var sun2 = new THREE.DirectionalLight( 0xFFFFFF, 1.0 );
+				sun2.position.set( -20, 25, - 13 );
+				scene.add( sun2 );
+
+				var baseGeometry = new THREE.BoxBufferGeometry( baseSizeCm * 10, 10, baseSizeCm * 10 );
+				var texLoader = new THREE.TextureLoader();
+				var baseTexture = texLoader.load( "./textures/grid.png" );
+				baseTexture.wrapS = THREE.RepeatWrapping;
+				baseTexture.wrapT = THREE.RepeatWrapping;
+				baseTexture.repeat.x = baseSizeCm;
+				baseTexture.repeat.y = baseSizeCm;
+				var baseMaterial = new THREE.MeshLambertMaterial( { map: baseTexture } );
+				var base = new THREE.Mesh( baseGeometry, baseMaterial );
+				base.position.y = - 5;
+				scene.add( base );
+
+				materialPhong = new THREE.MeshPhongMaterial( { color: new THREE.Color( 0xD5D5D5 ) } );
+
+				var lithofunVertexShader = `
+
+					varying vec2 vUv;
+
+					void main() {
+
+						vUv = uv;
+						gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+					}
+
+				`;
+
+				var lithofunFragmentShader = `
+
+					uniform sampler2D theMap;
+					varying vec2 vUv;
+
+					void main() {
+
+						float gray = texture2D( theMap, vUv ).g;
+
+						vec3 finalColor = vec3( 1.0, 1.0, 1.0 );
+
+						gl_FragColor = vec4( ( 1.0 - gray * 0.7 ) * finalColor, gray * 0.2 + 0.8 );
+
+					}
+				`;
+
+				materialTranslucent = new THREE.ShaderMaterial( {
+					transparent: true,
+					vertexShader: lithofunVertexShader,
+					fragmentShader: lithofunFragmentShader,
+					uniforms: {
+						theMap: { value: null }
+					}
+				} );
+
+				createGUI();
+
+			}
+
+			function createGUI() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+
+				controls = new OrbitControls( camera, renderer.domElement );
+
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+				gui = new GUI();
+				gui.width = 500;
+
+				guiData = {
+					loadImage: loadImage,
+
+					litophaneWidth: 120,
+					minThickness: 1.6,
+					maxThickness: 5,
+					xyAngle: 120,
+					zStartAngle: 90,
+					zEndAngle: 90,
+					invertImage: true,
+
+					realistic: false,
+
+					saveSTL: saveSTL,
+					viewSource: viewSource
+				};
+
+				loadImageBtn = gui.add( guiData, "loadImage" ).name( "Load PNG or JPEG image..." );
+				gui.add( guiData, "litophaneWidth", 40, 600, 1 ).name( "Lithophane width (mm): " ).onFinishChange( updateMesh );
+				gui.add( guiData, "minThickness", 0.4, 8, 0.1 ).name( "Min. thickness (mm): " ).onFinishChange( updateMesh );
+				gui.add( guiData, "maxThickness", 0.4, 8, 0.1 ).name( "Max. thickness (mm): " ).onFinishChange( updateMesh );
+				gui.add( guiData, "xyAngle", 0, 360, 1 ).name( "XY angle: " ).onFinishChange( updateMesh );
+				gui.add( guiData, "zEndAngle", 0, 180, 1 ).name( "Z top angle: " ).onFinishChange( updateMesh );
+				gui.add( guiData, "zStartAngle", 0, 180, 1 ).name( "Z bottom angle: " ).onFinishChange( updateMesh );
+				gui.add( guiData, "invertImage" ).name( "Invert image: " ).onChange( function invertImageChanged () {
+
+					imageLoaded();
+
+				} );
+
+				var realisticControl = gui.add( guiData, "realistic" ).name( "Realistic render: " ).onChange( function realisticChanged () {
+
+					if ( theMesh ) {
+
+						theMesh.material = realisticControl.getValue() ? materialTranslucent : materialPhong;
+
+					}
+
+				} );
+
+				gui.add( guiData, "saveSTL" ).name( "Save to STL..." );
+				gui.add( guiData, "viewSource" ).name( "View source code and docs..." );
+
+				inputFiles = document.getElementById( 'theInputFiles' );
+				inputFiles.addEventListener( 'change', inputFilesChanged, false );
+
+				info = document.createElement( 'div' );
+				setInfo( 'Click on the "Load image" button to start...' );
+				document.body.appendChild( info );
+
+			}
+
+			function loadImage() {
+
+				if ( image ) {
+
+					document.location.reload();
+
+				}
+				else {
+
+					inputFiles.click();
+
+				}
+
+			}
+
+			function inputFilesChanged() {
+
+			    var file = event.target.files[ 0 ];
+
+				if ( file ) {
+
+					var reader = new FileReader();
+
+					reader.onload = function( event ) {
+
+						image = new Image();
+
+						loadImageBtn.name( "Start over again" );
+
+						image.addEventListener( 'load', function ( event ) {
+
+							imageName = file.name;
+
+							imageLoaded();
+
+						}, false );
+
+						image.addEventListener( 'error', function ( event ) {
+
+							alert( "Error while loading the image: " + file.name );
+
+						}, false );
+
+						image.src = event.target.result;
+
+					}
+
+					reader.onerror = function ( event ) {
+
+						alert( "Error while loading the file: " + file.name );
+
+					}
+
+					reader.readAsDataURL( file );
+
+				}
+
+			}
+
+			function imageLoaded() {
+
+				if ( image.width < 2 || image.height < 2 ) {
+
+					image = null;
+					alert( "Minimum image size is 2 pixels wide" );
+					return;
+
+				}
+
+				var doCreateMesh = canvas === undefined;
+
+				if ( doCreateMesh ) {
+
+					canvas = document.createElement( 'canvas' );
+					canvas.width = image.width;
+					canvas.height = image.height;
+
+					var numPixels = image.width * image.height;
+
+					imageGrayValues = new Float32Array( numPixels );
+
+				}
+
+				var canvasCtx2d = canvas.getContext( '2d' );
+
+				canvasCtx2d.drawImage( image, 0, 0 );
+
+				var imageData = canvasCtx2d.getImageData( 0, 0, image.width, image.height );
+				var canvasPixels = imageData.data;
+
+				var invert = guiData.invertImage;
+
+				var width = image.width;
+				var height = image.height;
+
+				var p = 0;
+				var pDest = image.width * ( image.height - 1 );
+				for ( var j = 0; j < height; j ++ ) {
+
+					for ( var i = 0; i < width; i ++ ) {
+
+						var gray = ( canvasPixels[ p ] + canvasPixels[ p + 1 ] + canvasPixels[ p + 2 ] ) / 767;
+
+						if ( invert ) {
+
+							gray = 1 - gray;
+
+						}
+
+						imageGrayValues[ pDest ++ ] = gray;
+
+						gray *= 255;
+
+						canvasPixels[ p ++ ] = gray;
+						canvasPixels[ p ++ ] = gray;
+						canvasPixels[ p ++ ] = gray;
+						p ++;
+
+					}
+
+					pDest -= 2 * width;
+
+				}
+
+				canvasCtx2d.putImageData( imageData, 0, 0 );
+
+				materialTranslucent.uniforms.theMap.value = new THREE.CanvasTexture( canvas );
+
+				var w = Math.round( 0.15 * window.innerWidth, 6 );
+				var h = Math.round( w * image.height / image.width, 6 );
+
+				canvas.style.width = w + "px";
+				canvas.style.height = h + "px";
+				canvas.style.display = "block";
+				canvas.style.position = "absolute";
+				canvas.style.bottom = "0%";
+				canvas.style.left = "0%";
+
+				if ( doCreateMesh ) {
+
+					document.body.appendChild( canvas );
+
+					if ( theMesh ) {
+
+						scene.remove( theMesh );
+
+						theMesh = null;
+						vertexBuffer = null;
+
+					}
+
+					theMesh = createMesh( guiData.realistic ? materialTranslucent : materialPhong );
+
+					theMesh.matrixAutoUpdate = false;
+					theMesh.updateMatrix();
+
+				}
+
+				updateMesh();
+
+				if ( theMesh.parent !== scene ) {
+
+					scene.add( theMesh );
+
+				}
+
+				var bb = theMesh.geometry.boundingBox;
+
+				var bbx = bb.max.x - bb.min.x;
+				var bby = bb.max.y - bb.min.y;
+				var bbz = bb.max.z - bb.min.z;
+
+				function prettyMM( mm ) {
+
+					return Math.round( mm * 10 ) / 10;
+
+				}
+
+				setInfo( "Image: " + imageName + " " + image.width + "x" + image.height + " pixels" + " B.Box: " + prettyMM( bbx ) + " x " + prettyMM( bbz ) + " x " + prettyMM( bby ) + " mm. Triangles: " + ( theMesh.geometry.getIndex().array.length / 3 ) );
+
+				if ( doCreateMesh ) {
+
+					controls.target.set( 0, bby, 0 ).multiplyScalar( 0.5 );
+					controls.update();
+
+				}
+
+			}
+
+			function createMesh( material ) {
+
+				var geometry = createGeometry();
+
+				return new THREE.Mesh( geometry, material );
+
+			}
+
+			function createGeometry() {
+
+				var pointsX = image.width;
+				var pointsY = image.height;
+				var halfX = pointsX * 0.5;
+				var pointsPerPlane = pointsX * pointsY;
+				var segmentsPerRow = pointsX - 1;
+				var segmentsPerColumn = pointsY - 1;
+
+				var geometry = new THREE.BufferGeometry();
+
+				var indices = [];
+				vertexBuffer = new Float32Array( 2 * pointsPerPlane * 3 );
+				var uvs = [];
+				var normals = [];
+
+				// Vertices, normals and uvs
+				var p = 0;
+				var dv = 1 / segmentsPerColumn;
+				var du = 1 / segmentsPerRow;
+
+				for ( var plane = 0; plane < 2; plane ++ ) {
+
+					var z = - plane;
+
+					var v = 0;
+
+					for ( var j = 0; j < pointsY; j ++ ) {
+
+						var u = 0;
+
+						for ( var i = 0; i < pointsX; i ++ ) {
+
+							// Only uvs are valid here. Positions and normals are actually populated in updateMesh()
+
+							vertexBuffer[ p ++ ] = i - halfX;
+							vertexBuffer[ p ++ ] = j;
+							vertexBuffer[ p ++ ] = z;
+
+							uvs.push( u, v );
+
+							normals.push( 0, 0, 1 );
+
+							u += du;
+
+						}
+
+						v += dv;
+
+					}
+
+				}
+
+				// Front and back planes faces
+				for ( var plane = 0; plane < 2; plane ++ ) {
+
+					for ( var j = 0; j < segmentsPerColumn; j ++ ) {
+
+						for ( var i = 0; i < segmentsPerRow; i ++ ) {
+
+							var a = i + j * pointsX + plane * pointsPerPlane;
+							var b = a + 1;
+							var c = a + pointsX;
+							var d = c + 1;
+
+							if ( plane === 0 ) {
+
+								indices.push( a, b, c );
+								indices.push( b, d, c );
+
+							}
+							else {
+
+								indices.push( a, c, b );
+								indices.push( b, c, d );
+
+							}
+						}
+
+					}
+
+				}
+
+				// Bottom faces
+				for ( var i = 0; i < segmentsPerRow; i ++ ) {
+
+					var a = i;
+					var b = a + pointsPerPlane;
+					var c = a + 1;
+					var d = c + pointsPerPlane;
+
+					indices.push( a, b, c );
+					indices.push( b, d, c );
+
+				}
+
+				// Top faces
+				for ( var i = 0; i < segmentsPerRow; i ++ ) {
+
+					var a = pointsX * segmentsPerColumn + i;
+					var b = a + 1;
+					var c = a + pointsPerPlane;
+					var d = b + pointsPerPlane;
+
+					indices.push( a, b, c );
+					indices.push( b, d, c );
+
+				}
+
+				// Left side faces
+				for ( var j = 0; j < segmentsPerColumn; j ++ ) {
+
+					var a = j * pointsX;
+					var b = a + pointsX;
+					var c = a + pointsPerPlane;
+					var d = b + pointsPerPlane;
+
+					indices.push( a, b, c );
+					indices.push( b, d, c );
+
+				}
+
+				// Right side faces
+				for ( var j = 0; j < segmentsPerColumn; j ++ ) {
+
+					var a = j * pointsX + segmentsPerRow;
+					var b = a + pointsX;
+					var c = b + pointsPerPlane;
+					var d = a + pointsPerPlane;
+
+					indices.push( a, c, b );
+					indices.push( a, d, c );
+
+				}
+
+				geometry.setIndex( indices );
+				geometry.addAttribute( 'position', new THREE.BufferAttribute( vertexBuffer, 3 ) );
+				geometry.addAttribute( 'normal', new THREE.Float32BufferAttribute( normals, 3 ) );
+				geometry.addAttribute( 'uv', new THREE.Float32BufferAttribute( uvs, 2 ) );
+
+				return geometry;
+			}
+
+			function updateMesh() {
+
+				if ( ! image ) {
+
+					return;
+
+				};
+
+				lithophaneFunctionCylinderSphere( image.width, image.height, imageGrayValues, vertexBuffer, guiData.litophaneWidth, guiData.xyAngle, guiData.zStartAngle, guiData.zEndAngle, guiData.maxThickness, guiData.minThickness );
+
+				var geometry = theMesh.geometry;
+				geometry.computeBoundingBox();
+				geometry.attributes.position.needsUpdate = true;
+				geometry.computeVertexNormals();
+
+			}
+
+			function lithophaneFunctionCylinderSphere( pointsX, pointsY, imageGrayValues, vertexBuffer, litophaneWidth, xyAngle, zStartAngle, zEndAngle, maxThickness, minThickness ) {
+
+				var width = litophaneWidth;
+				var width2 = width * 0.5;
+				var aspect = image.height / image.width;
+				var height = width * aspect;
+
+				var axy = ( xyAngle * Math.PI / 180 );
+				var dAngleXY = axy / ( pointsX - 1 );
+				var angleXY0 = - axy * 0.5;
+
+				var curvatureXYRadius = 0;
+				if ( dAngleXY !== 0 ) {
+
+					curvatureXYRadius = width2 / Math.sin( Math.min( Math.abs( angleXY0 ), Math.PI * 0.5 ) );
+
+				}
+
+				var dAngleZ = ( ( zEndAngle - zStartAngle ) * Math.PI / 180 ) / ( pointsY - 1 );
+				var angleZ0 = zStartAngle * Math.PI / 180;
+				if ( dAngleZ < 0 ) {
+
+					angleZ0 = zEndAngle * Math.PI / 180;
+					dAngleZ = - dAngleZ;
+
+				}
+
+				if ( maxThickness < minThickness ) {
+
+					var temp = maxThickness;
+					maxThickness = minThickness;
+					minThickness = temp;
+
+				}
+
+				var innerCurvatureXYRadius = curvatureXYRadius - maxThickness;
+				var dCurvatureXYRadius = maxThickness - minThickness;
+				var minCurvatureXYRadius = curvatureXYRadius - dCurvatureXYRadius;
+
+				var dy = height / ( pointsY - 1 );
+
+				var p = 0;
+				var pImg = 0;
+				for ( var plane = 0; plane < 2; plane ++ ) {
+
+					var angleZ = angleZ0 - Math.PI * 0.5;
+					var y = 0;
+
+					for ( var j = 0; j < pointsY; j ++ ) {
+
+						var angleXY = angleXY0;
+
+						for ( var i = 0; i < pointsX; i ++ ) {
+
+							var x = 0;
+							var z = 0;
+
+							var r = 1;
+
+							if ( dAngleZ !== 0 && dAngleXY !== 0 ) {
+
+								r *= Math.cos( angleZ );
+
+							}
+
+							if ( plane === 0 ) {
+
+								var grayValue = imageGrayValues[ pImg ++ ];
+
+								r *= grayValue * dCurvatureXYRadius + minCurvatureXYRadius;
+
+							}
+							else {
+
+								r *= innerCurvatureXYRadius;
+
+							}
+
+							if ( dAngleXY !== 0 ) {
+
+								x = Math.sin( angleXY ) * r;
+								z = Math.cos( angleXY ) * r - curvatureXYRadius;
+
+								angleXY += dAngleXY;
+
+							}
+							else {
+
+								x = width * ( i / pointsX - 0.5 );
+								z = r;
+
+							}
+
+							vertexBuffer[ p ++ ] = x;
+							vertexBuffer[ p ++ ] = y;
+							vertexBuffer[ p ++ ] = z;
+
+						}
+
+						angleZ += dAngleZ;
+						y += dy;
+
+					}
+
+				}
+
+			}
+
+			function saveSTL() {
+
+				if ( ! image ) {
+
+					alert( "No  image loaded. Please click on Load image button first :-)" );
+					return;
+
+				}
+
+				var stlExporter = new STLExporterOptimized();
+
+				var stlFileBytes = stlExporter.parse( theMesh, { binary: true } );
+
+				var link = window.document.createElement( "a" );
+				link.href = window.URL.createObjectURL( new Blob( [ stlFileBytes ] ), { type: "model/stl" } );
+				link.download = "Lithophane_" + imageName + ".stl";
+				document.body.appendChild( link );
+				link.click();
+				document.body.removeChild( link );
+
+			}
+
+			function viewSource() {
+
+				document.location = "https://github.com/yomboprime/lithofun";
+
+			}
+
+			function setInfo( message ) {
+
+				info.innerText = message;
+
+				info.style.backgroundColor = "black";
+				info.style.display = "block";
+				info.style.position = "absolute";
+				info.style.bottom = "0%";
+				info.style.right = "0%";
+				info.style.textAlign = "right";
+
+			}
+
+			// from http://stackoverflow.com/questions/260857/changing-website-favicon-dynamically
+			function changeFavicon( src ) {
+
+				var link = document.querySelector( "link[rel*='icon']" ) || document.createElement( 'link' );
+				link.type = 'image/x-icon';
+				link.rel = 'shortcut icon';
+				link.href = src;
+				document.getElementsByTagName( 'head' )[ 0 ].appendChild( link );
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				renderer.render( scene, camera );
+
+				stats.update();
+
+			}
+
+		</script>
+	</body>
+</html>
