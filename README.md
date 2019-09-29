@@ -41,7 +41,7 @@ These are the minimum and maximum thickness of the lithophane. The minimum corre
 
 #### XY angle
 
-This angle controls the curvature along the XY plane. When its value is 0º, the lithophane is planar. When it is 180º, the lithophane is a closed cylinder. Values in-between gives you a lithophane shaped liked a roof tile.
+This angle controls the curvature along the XY plane. When its value is 0º, the lithophane is planar. When it is 180º, the lithophane is a closed cylinder. Values in-between gives you a lithophane shaped liked a curved roof tile.
 
 #### Z top angle, Z bottom angle
 
