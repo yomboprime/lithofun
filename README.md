@@ -37,7 +37,7 @@ This is the distance in mm from leftmost to rightmost part of the lithophane.
 
 #### Min. thickness (mm) and Max. thickness (mm)
 
-These are the minimum and maximum thickness of the lithophane. The minimum corresponds to the lighter parts of the image and the maximum to the darker ones.
+These are the minimum and maximum thickness of the lithophane. The minimum corresponds to the lighter parts and the maximum to the darker ones.
 
 #### XY angle
 
